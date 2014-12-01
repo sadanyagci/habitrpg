@@ -147,15 +147,19 @@ exports.cancelSubscription = function(req, res, next){
   var user = res.locals.user;
   if (!user.purchased.plan.customerId)
     return res.json(401, {err: "User does not have a plan subscription"});
-  async.waterfall([
-    function(cb) {
-      paypal.billingAgreement.cancel(user.purchased.plan.customerId, {note: "Canceling the subscription"}, cb);
+  async.auto({
+    get_cus: function(cb){
+      paypal.billingAgreement.get(user.purchased.plan.customerId, cb);
     },
-    function(response, cb) {
-      payments.cancelSubscription(user);
-      user.save(cb);
-    }
-  ], function(err, saved){
+    del_cus: ['get_cus', function(cb, results){
+      paypal.billingAgreement.cancel(user.purchased.plan.customerId, {note: "Canceling the subscription"}, cb);
+    }],
+    cancel_sub: ['get_cus', function(cb, results){
+      var data = {user: user, paymentMethod: 'Paypal', nextBill: results.get_cus.agreement_details.next_billing_date};
+      console.log(data);
+      payments.cancelSubscription(data, cb)
+    }]
+  }, function(err){
     if (err) return next(parseErr(err));
     res.redirect('/');
     user = null;
@@ -179,7 +183,6 @@ exports.ipn = function(req, res, next) {
           if (err) return logger.error(err);
           if (_.isEmpty(user)) return; // looks like the cancellation was already handled properly above (see api.paypalSubscribeCancel)
           payments.cancelSubscription(user);
-          user.save();
         });
         break;
     }
